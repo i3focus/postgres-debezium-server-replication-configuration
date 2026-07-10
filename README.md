@@ -8,10 +8,10 @@ A solução utiliza o **Debezium Server**, que roda em um único contêiner Dock
 
 1. **VPS de Origem**: PostgreSQL com replicação lógica habilitada (`wal_level = logical`) e captura de identidade completa (`REPLICA IDENTITY FULL`) em todas as tabelas.
 
-1. **VPS de Destino**: PostgreSQL padrão com as mesmas 50 tabelas já criadas.
+1. **VPS de Destino**: PostgreSQL padrão com as mesmas tabelas já criadas (nesse caso, o banco de dados de destino já possui toda a estrutura).
 
 1. **Debezium Server**: Contêiner Docker que:
-  - Executa um **Snapshot Inicial** (`snapshot.mode: initial`) para ler todos os dados existentes nas 50 tabelas e sincronizá-los com o destino.
+  - Executa um **Snapshot Inicial** (`snapshot.mode: initial`) para ler todos os dados existentes nas tabelas e sincronizá-los com o destino.
   - Captura **todas as alterações** (INSERT, UPDATE, DELETE) em tempo real via logical replication.
   - Usa **JDBC Sink** para aplicar as mudanças no destino via `upsert` (evitando duplicatas) e `delete` [1].
 
@@ -21,13 +21,13 @@ A solução utiliza o **Debezium Server**, que roda em um único contêiner Dock
 
 - Duas VPSs com PostgreSQL instalado (versão 10 ou superior).
 
-- As 50 tabelas já existem no banco de dados de destino (a estrutura deve ser idêntica à origem).
+- As tabelas já existem no banco de dados de destino (a estrutura deve ser idêntica à da origem).
 
 - Docker instalado na VPS onde o Debezium Server irá rodar.
 
 ### Passo 1: Configurar o PostgreSQL de origem
 
-O PostgreSQL de origem precisa ter a replicação lógica habilitada. Além disso, para garantir que o Debezium capture todas as colunas durante as atualizações e exclusões em todas as 50 tabelas, precisamos ajustar o `REPLICA IDENTITY`.
+O PostgreSQL de origem precisa ter a replicação lógica habilitada. Além disso, para garantir que o Debezium capture todas as colunas durante as atualizações e exclusões em todas as tabelas, precisamos ajustar o `REPLICA IDENTITY`.
 
 Conecte-se ao PostgreSQL de origem e execute os seguintes comandos SQL:
 
@@ -51,7 +51,7 @@ GRANT USAGE ON SCHEMA public TO dbz;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dbz;
 ```
 
-**Passo Crítico:** O Debezium precisa ler o Write-Ahead Log (WAL). Por padrão, o PostgreSQL registra apenas a chave primária nos logs de replicação. Para capturar todas as colunas (necessário para atualizações e deleções corretas), devemos alterar o `REPLICA IDENTITY` de todas as 50 tabelas para `FULL`:
+**Passo Crítico:** O Debezium precisa ler o Write-Ahead Log (WAL). Por padrão, o PostgreSQL registra apenas a chave primária nos logs de replicação. Para capturar todas as colunas (necessário para atualizações e deleções corretas), devemos alterar o `REPLICA IDENTITY` de todas as tabelas para `FULL`:
 
 ```sql
 -- 3. Alterar REPLICA IDENTITY para todas as tabelas
@@ -121,9 +121,9 @@ debezium.source.schema.include.list=public
 
 - `debezium.source.snapshot.mode=initial`: Este é o comando que força o Debezium a fazer um "scan" completo em todas as 50 tabelas e enviar os dados para o destino, garantindo que os dois bancos fiquem idênticos (o mesmo "footprint") antes de começar o streaming contínuo.
 
-- `debezium.sink.jdbc.insert.mode=upsert`: Garante que, se o registro já existir no destino, ele será atualizado; se não existir, será inserido. Isso é crucial durante o snapshot inicial para não falhar se houver duplicatas.
+- `debezium.sink.jdbc.insert.mode=upsert`: Garante que, se o registro já existir no destino, será atualizado; se não existir, será inserido. Isso é crucial durante o snapshot inicial para não falhar caso haja duplicatas.
 
-- `debezium.sink.jdbc.delete.enabled=true`: Propaga as exclusões feitas na origem para o destino.
+- `debezium.sink.jdbc.delete.enabled=true`: Propaga as exclusões da origem para o destino.
 
 ### Passo 4: Executar o Debezium Server com Docker
 
