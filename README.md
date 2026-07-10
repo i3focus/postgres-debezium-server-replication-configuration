@@ -1,4 +1,4 @@
-# Tutorial: Sincronização Inicial e Replicação Contínua PostgreSQL (50+ Tabelas) com Debezium Server
+# Tutorial: Sincronização Inicial e Replicação Contínua PostgreSQL com Debezium Server
 
 Este tutorial atualizado fornece um guia passo a passo para sincronizar tabelas de um banco de dados PostgreSQL (VPS Origem) para outro PostgreSQL (VPS Destino), garantindo que os dados fiquem idênticos e, depois, mantendo a replicação contínua em tempo real (CDC) para todas as alterações futuras.
 
