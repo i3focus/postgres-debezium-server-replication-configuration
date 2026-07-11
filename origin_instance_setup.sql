@@ -24,10 +24,24 @@ DO $$
 DECLARE
     r RECORD;
 BEGIN
-    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public')
+    FOR r IN (
+        SELECT schemaname, tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND EXISTS (
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name = tablename
+                AND table_type = 'BASE TABLE'
+          )
+    )
     LOOP
-        EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL;', 'public.' || r.tablename);
-        RAISE NOTICE 'REPLICA IDENTITY FULL aplicado em %', r.tablename;
+        BEGIN
+            EXECUTE format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename);
+            RAISE NOTICE 'REPLICA IDENTITY FULL aplicado em %', r.tablename;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'ERRO ao aplicar em %: %', r.tablename, SQLERRM;
+        END;
     END LOOP;
 END $$;
 
