@@ -60,7 +60,3 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
   AND c.relkind = 'r'   -- 'r' = tabela regular (exclui views)
 ORDER BY c.relname;
-
--- 5. Cria a replicação manualmente para PostgreSQL versão menor que 15
--- Cria a publication manualmente (compatível com PostgreSQL 12)
-CREATE PUBLICATION dbz_publication FOR ALL TABLES IN SCHEMA public;
