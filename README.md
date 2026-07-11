@@ -202,9 +202,9 @@ SQL Error [42703]: ERROR: record "r" has no field "schemaname"
   Where: SQL statement "SELECT format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename)"
 ```
 
-**Causa:**O comando `format()` estava tentando acessar o campo `r.schemaname` dentro do loop `FOR`, mas a query inicial do `SELECT` dentro do loop apenas retornava `tablename`. Como o `RECORD` (`r`) não continha o campo `schemaname`, o PL/pgSQL falhava.
+**Causa:** O comando `format()` estava tentando acessar o campo `r.schemaname` dentro do loop `FOR`, mas a query inicial do `SELECT` dentro do loop apenas retornava `tablename`. Como o `RECORD` (`r`) não continha o campo `schemaname`, o PL/pgSQL falhava.
 
-**Solução:**Adicionar `schemaname` ao `SELECT` inicial do loop para que o `RECORD` contenha ambos os campos necessários.
+**Solução:** Adicionar `schemaname` ao `SELECT` inicial do loop para que o `RECORD` contenha ambos os campos necessários.
 
 ```sql
 DO $$
@@ -228,9 +228,9 @@ SQL Error [42P01]: ERROR: relation "public.jhi_authority_aud" does not exist
   Where: SQL statement "ALTER TABLE "public.jhi_authority_aud" REPLICA IDENTITY FULL;"
 ```
 
-**Causa:**A tabela `pg_tables` listou uma tabela que na verdade não existe mais no banco de dados (pode ser um artefato de uma extensão ou de um schema que foi removido). O loop tentou executar o `ALTER TABLE` em uma tabela inexistente, abortando o script.
+**Causa:** A tabela `pg_tables` listou uma tabela que na verdade não existe mais no banco de dados (pode ser um artefato de uma extensão ou de um schema que foi removido). O loop tentou executar o `ALTER TABLE` em uma tabela inexistente, abortando o script.
 
-**Solução:**Filtrar apenas as tabelas que realmente existem no `information_schema` e adicionar um bloco `BEGIN/EXCEPTION` dentro do loop para que, se uma tabela falhar, o script continue para a próxima sem abortar.
+**Solução:** Filtrar apenas as tabelas que realmente existem no `information_schema` e adicionar um bloco `BEGIN/EXCEPTION` dentro do loop para que, se uma tabela falhar, o script continue para a próxima sem abortar.
 
 ```sql
 DO $$
@@ -267,9 +267,9 @@ END $$;
 SQL Error [42703]: ERROR: column "replica_identity" does not exist
 ```
 
-**Causa:**O campo `replica_identity` não existe na tabela de sistema `pg_tables`. Ele pertence à tabela `pg_class` e seu nome correto é `relreplident`.
+**Causa:** O campo `replica_identity` não existe na tabela de sistema `pg_tables`. Ele pertence à tabela `pg_class` e seu nome correto é `relreplident`.
 
-**Solução:**Consultar diretamente a `pg_class` e fazer o `JOIN` correto com `pg_namespace`, traduzindo os códigos de identidade (`d`, `n`, `f`, `i`) para texto legível.
+**Solução:** Consultar diretamente a `pg_class` e fazer o `JOIN` correto com `pg_namespace`, traduzindo os códigos de identidade (`d`, `n`, `f`, `i`) para texto legível.
 
 ```sql
 SELECT
@@ -288,20 +288,20 @@ WHERE n.nspname = 'public'
 ORDER BY c.relname;
 ```
 
-## 4. Usuário sem Permissão de REPLICATION
+## 4. Usuário sem permissão de REPLICATION
 
 **Mensagem de Erro:**
 
 ```
-ERROR Postgres roles LOGIN and REPLICATION are not assigned to user: nucleo_app
+ERROR Postgres roles LOGIN and REPLICATION are not assigned to user: your_user
 ```
 
-**Causa:**O usuário configurado no Debezium (`nucleo_app` ou `replicator`) possuía permissão de `LOGIN` e era `superuser`, mas não possuía explicitamente a `role` de `REPLICATION`, que é obrigatória para o Debezium consumir o Write-Ahead Log (WAL).
+**Causa:** O usuário configurado no Debezium (`your_user` ou `replicator`) possuía permissão de `LOGIN` e era `superuser`, mas não possuía explicitamente a `role` de `REPLICATION`, que é obrigatória para o Debezium consumir o Write-Ahead Log (WAL).
 
-**Solução:**Conceder a role de replicação ao usuário no banco de origem.
+**Solução:** Conceder a role de replicação ao usuário no banco de origem.
 
 ```sql
-ALTER ROLE nucleo_app WITH REPLICATION;
+ALTER ROLE your_user WITH REPLICATION;
 -- ou
 ALTER ROLE replicator WITH REPLICATION;
 ```
@@ -315,9 +315,9 @@ Creating Publication with statement 'CREATE PUBLICATION dbz_publication FOR ALL 
 ERROR: syntax error at or near "IN"
 ```
 
-**Causa:**Por padrão, ou quando configurado com `publication.autocreate.mode=all_tables` ou `filtered` no Debezium 3.6, o Debezium tenta criar a publication com a qualificação de schema (ex: `FOR TABLE "public"."tabela"`). Essa sintaxe foi introduzida apenas no **PostgreSQL 15**. O banco de origem roda **PostgreSQL 12**, que não suporta essa qualificação com aspas duplas.
+**Causa:** Por padrão, ou quando configurado com `publication.autocreate.mode=all_tables` ou `filtered` no Debezium 3.6, o Debezium tenta criar a publication com a qualificação de schema (ex.: `FOR TABLE "public"."tabela"`). Essa sintaxe foi introduzida apenas no **PostgreSQL 15**. O banco de origem roda **PostgreSQL 12**, que não suporta essa qualificação com aspas duplas.
 
-**Solução:**Desativar a autocriação automática pelo Debezium e criar a publication manualmente no PostgreSQL 12, listando as tabelas apenas pelo nome (sem o prefixo do schema e sem aspas).
+**Solução:** Desativar a autocriação automática pelo Debezium e criar a publication manualmente no PostgreSQL 12, listando as tabelas apenas pelo nome (sem o prefixo do schema e sem aspas).
 
 1. Remover a linha `debezium.source.publication.autocreate.mode` do `application.properties`.
 
@@ -325,10 +325,10 @@ ERROR: syntax error at or near "IN"
 
 ```sql
 CREATE PUBLICATION dbz_publication FOR TABLE
-    air_humidity,
-    air_humidity_aud,
-    alert,
-    alert_aud;
+    table1,
+    table2,
+    table3,
+    table4;
     -- (listar todas as tabelas desejadas)
 ```
 
@@ -340,7 +340,7 @@ CREATE PUBLICATION dbz_publication FOR TABLE
 Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for schema cron
 ```
 
-**Causa:**O Debezium tentou escanear o catálogo do banco de dados e encontrou o schema `cron` (geralmente usado pela extensão `pg_cron`), tentando acessá-lo mesmo que o `schema.include.list` estivesse configurado apenas para `public`. O usuário do Debezium não tinha permissão para esse schema.
+**Causa:** O Debezium tentou escanear o catálogo do banco de dados e encontrou o schema `cron` (geralmente usado pela extensão `pg_cron`), tentando acessá-lo mesmo que o `schema.include.list` estivesse configurado apenas para `public`. O usuário do Debezium não tinha permissão para esse schema.
 
 **Solução:**
 
@@ -365,9 +365,9 @@ WARN [io.debezium.embedded.async.AsyncEmbeddedEngine] Flush of the offsets faile
 java.util.concurrent.ExecutionException: org.apache.kafka.connect.errors.ConnectException: java.nio.file.AccessDeniedException: data/offsets.dat
 ```
 
-**Causa:**O Debezium Server rodou com sucesso e começou a exportar dados, mas falhou ao tentar salvar o offset (posição no WAL) no disco. Isso ocorre porque o volume Docker montado para `data/offsets.dat` foi criado pelo usuário `root` no host, mas o processo Java dentro do container roda com um UID diferente (geralmente 1001), não tendo permissão de escrita na pasta.
+**Causa:** O Debezium Server rodou com sucesso e começou a exportar dados, mas falhou ao tentar salvar o offset (posição no WAL) no disco. Isso ocorre porque o volume Docker montado para `data/offsets.dat` foi criado pelo usuário `root` no host, mas o processo Java dentro do container roda com um UID diferente (geralmente 1001), não tendo permissão de escrita na pasta.
 
-**Solução:**Ajustar as permissões da pasta de dados no host antes de subir o container:
+**Solução:** Ajustar as permissões da pasta de dados no host antes de subir o container:
 
 ```bash
 mkdir -p ./debezium-data
