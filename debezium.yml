@@ -10,6 +10,8 @@ services:
     volumes:
       - /application/docker/debezium/application.properties:/debezium/config/application.properties:z
       - /application/volumes/debezium/data:/debezium/data:z
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/etc/localtime:/etc/localtime:ro"
     environment:
       - QUARKUS_LOG_CONSOLE_FORMAT=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c] (%t) %s%e%n
       - QUARKUS_LOG_CONSOLE_LEVEL=INFO
