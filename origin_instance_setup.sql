@@ -46,8 +46,17 @@ BEGIN
 END $$;
 
 -- 4. Verificar se todas as tabelas estão configuradas corretamente
-SELECT schemaname, tablename, replica_identity FROM pg_tables
-  JOIN pg_class ON relname = tablename
-  JOIN pg_namespace ON pg_namespace.nspname = schemaname
-    WHERE schemaname = 'public'
-      ORDER BY tablename;
+SELECT
+    n.nspname AS schemaname,
+    c.relname AS tablename,
+    CASE c.relreplident
+        WHEN 'd' THEN 'DEFAULT'
+        WHEN 'n' THEN 'NOTHING'
+        WHEN 'f' THEN 'FULL'
+        WHEN 'i' THEN 'INDEX'
+    END AS replica_identity
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'   -- 'r' = tabela regular (exclui views)
+ORDER BY c.relname;
