@@ -26,7 +26,7 @@ DECLARE
 BEGIN
     FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public')
     LOOP
-        EXECUTE format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename);
+        EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL;', 'public.' || r.tablename);
         RAISE NOTICE 'REPLICA IDENTITY FULL aplicado em %', r.tablename;
     END LOOP;
 END $$;
