@@ -1,11 +1,12 @@
 ### https://quay.io/repository/debezium/server?tab=tags
+version: '3.4'
 services:
   debezium-server:
     image: quay.io/debezium/server:3.6.0.Final
     container_name: debezium-server
     restart: unless-stopped
     ports:
-      - "8199:8080"
+      - 8199:8080
     volumes:
       - /application/docker/debezium/application.properties:/debezium/config/application.properties:z
       - /application/volumes/debezium/data:/debezium/data:z
@@ -18,3 +19,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks: 
+      - proxy
+
+networks: 
+  proxy:
+    external: true
