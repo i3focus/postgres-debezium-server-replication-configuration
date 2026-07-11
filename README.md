@@ -186,3 +186,245 @@ A alteração será refletida instantaneamente.
 ---
 
 **References**[1]: [https://debezium.io/blog/2026/07/06/kafka-less-migration/](https://debezium.io/blog/2026/07/06/kafka-less-migration/) "Debezium Blog: Building Kafka-Less Data Integration Pipelines with Debezium Server (2026)."
+
+---
+
+# Troubleshooting: Debezium Server PostgreSQL to PostgreSQL (CDC & Snapshot)
+
+Este documento compila os erros mais comuns encontrados durante a configuração do Debezium Server para replicação entre dois bancos PostgreSQL (versão 12), detalhando as causas raízes e as soluções aplicadas.
+
+## 1. Erro no Script de Alteração de REPLICA IDENTITY
+
+**Mensagem de Erro:**
+
+```
+SQL Error [42703]: ERROR: record "r" has no field "schemaname"
+  Where: SQL statement "SELECT format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename)"
+```
+
+**Causa:**O comando `format()` estava tentando acessar o campo `r.schemaname` dentro do loop `FOR`, mas a query inicial do `SELECT` dentro do loop apenas retornava `tablename`. Como o `RECORD` (`r`) não continha o campo `schemaname`, o PL/pgSQL falhava.
+
+**Solução:**Adicionar `schemaname` ao `SELECT` inicial do loop para que o `RECORD` contenha ambos os campos necessários.
+
+```sql
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public')
+    LOOP
+        EXECUTE format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename);
+        RAISE NOTICE 'REPLICA IDENTITY FULL aplicado em %', r.tablename;
+    END LOOP;
+END $$;
+```
+
+## 2. Tabela Fictícia ou Ausente na `pg_tables`
+
+**Mensagem de Erro:**
+
+```
+SQL Error [42P01]: ERROR: relation "public.jhi_authority_aud" does not exist
+  Where: SQL statement "ALTER TABLE "public.jhi_authority_aud" REPLICA IDENTITY FULL;"
+```
+
+**Causa:**A tabela `pg_tables` listou uma tabela que na verdade não existe mais no banco de dados (pode ser um artefato de uma extensão ou de um schema que foi removido). O loop tentou executar o `ALTER TABLE` em uma tabela inexistente, abortando o script.
+
+**Solução:**Filtrar apenas as tabelas que realmente existem no `information_schema` e adicionar um bloco `BEGIN/EXCEPTION` dentro do loop para que, se uma tabela falhar, o script continue para a próxima sem abortar.
+
+```sql
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (
+        SELECT schemaname, tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND EXISTS (
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name = tablename
+                AND table_type = 'BASE TABLE'
+          )
+    )
+    LOOP
+        BEGIN
+            EXECUTE format('ALTER TABLE %I.%I REPLICA IDENTITY FULL;', r.schemaname, r.tablename);
+            RAISE NOTICE 'REPLICA IDENTITY FULL aplicado em %', r.tablename;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'ERRO ao aplicar em %: %', r.tablename, SQLERRM;
+        END;
+    END LOOP;
+END $$;
+```
+
+## 3. Erro ao Consultar o Status do REPLICA IDENTITY
+
+**Mensagem de Erro:**
+
+```
+SQL Error [42703]: ERROR: column "replica_identity" does not exist
+```
+
+**Causa:**O campo `replica_identity` não existe na tabela de sistema `pg_tables`. Ele pertence à tabela `pg_class` e seu nome correto é `relreplident`.
+
+**Solução:**Consultar diretamente a `pg_class` e fazer o `JOIN` correto com `pg_namespace`, traduzindo os códigos de identidade (`d`, `n`, `f`, `i`) para texto legível.
+
+```sql
+SELECT
+    n.nspname AS schemaname,
+    c.relname AS tablename,
+    CASE c.relreplident
+        WHEN 'd' THEN 'DEFAULT'
+        WHEN 'n' THEN 'NOTHING'
+        WHEN 'f' THEN 'FULL'
+        WHEN 'i' THEN 'INDEX'
+    END AS replica_identity
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+ORDER BY c.relname;
+```
+
+## 4. Usuário sem Permissão de REPLICATION
+
+**Mensagem de Erro:**
+
+```
+ERROR Postgres roles LOGIN and REPLICATION are not assigned to user: nucleo_app
+```
+
+**Causa:**O usuário configurado no Debezium (`nucleo_app` ou `replicator`) possuía permissão de `LOGIN` e era `superuser`, mas não possuía explicitamente a `role` de `REPLICATION`, que é obrigatória para o Debezium consumir o Write-Ahead Log (WAL).
+
+**Solução:**Conceder a role de replicação ao usuário no banco de origem.
+
+```sql
+ALTER ROLE nucleo_app WITH REPLICATION;
+-- ou
+ALTER ROLE replicator WITH REPLICATION;
+```
+
+## 5. Erro de Sintaxe ao Criar Publication (PostgreSQL 12 vs 15+)
+
+**Mensagem de Erro:**
+
+```
+Creating Publication with statement 'CREATE PUBLICATION dbz_publication FOR ALL TABLES;'
+ERROR: syntax error at or near "IN"
+```
+
+**Causa:**Por padrão, ou quando configurado com `publication.autocreate.mode=all_tables` ou `filtered` no Debezium 3.6, o Debezium tenta criar a publication com a qualificação de schema (ex: `FOR TABLE "public"."tabela"`). Essa sintaxe foi introduzida apenas no **PostgreSQL 15**. O banco de origem roda **PostgreSQL 12**, que não suporta essa qualificação com aspas duplas.
+
+**Solução:**Desativar a autocriação automática pelo Debezium e criar a publication manualmente no PostgreSQL 12, listando as tabelas apenas pelo nome (sem o prefixo do schema e sem aspas).
+
+1. Remover a linha `debezium.source.publication.autocreate.mode` do `application.properties`.
+
+1. Criar a publication manualmente no banco de origem:
+
+```sql
+CREATE PUBLICATION dbz_publication FOR TABLE
+    air_humidity,
+    air_humidity_aud,
+    alert,
+    alert_aud;
+    -- (listar todas as tabelas desejadas)
+```
+
+## 6. Tentativa de Leitura de Schemas Indesejados (ex: `cron`)
+
+**Mensagem de Erro:**
+
+```
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for schema cron
+```
+
+**Causa:**O Debezium tentou escanear o catálogo do banco de dados e encontrou o schema `cron` (geralmente usado pela extensão `pg_cron`), tentando acessá-lo mesmo que o `schema.include.list` estivesse configurado apenas para `public`. O usuário do Debezium não tinha permissão para esse schema.
+
+**Solução:**
+
+1. Configurar explicitamente a exclusão de schemas no `application.properties`:
+
+   ```
+   debezium.source.schema.exclude.list=cron,information_schema,pg_catalog,pg_toast
+   ```
+
+1. Revogar o acesso do usuário do Debezium a schemas que não devem ser monitorados:
+
+   ```sql
+   REVOKE USAGE ON SCHEMA cron FROM replicator;
+   ```
+
+## 7. Erro de Permissão no Arquivo de Offsets (`data/offsets.dat`)
+
+**Mensagem de Erro:**
+
+```
+WARN [io.debezium.embedded.async.AsyncEmbeddedEngine] Flush of the offsets failed, canceling the flush.: 
+java.util.concurrent.ExecutionException: org.apache.kafka.connect.errors.ConnectException: java.nio.file.AccessDeniedException: data/offsets.dat
+```
+
+**Causa:**O Debezium Server rodou com sucesso e começou a exportar dados, mas falhou ao tentar salvar o offset (posição no WAL) no disco. Isso ocorre porque o volume Docker montado para `data/offsets.dat` foi criado pelo usuário `root` no host, mas o processo Java dentro do container roda com um UID diferente (geralmente 1001), não tendo permissão de escrita na pasta.
+
+**Solução:**Ajustar as permissões da pasta de dados no host antes de subir o container:
+
+```bash
+mkdir -p ./debezium-data
+sudo chown -R 1001:1001 ./debezium-data
+```
+
+Ou, como alternativa rápida:
+
+```bash
+chmod 777 ./debezium-data
+```
+
+---
+
+## Resumo da Configuração Final (`application.properties`)
+
+Após resolver todos os problemas acima, a configuração final que funcionou foi:
+
+```
+# SINK (DESTINO)
+debezium.sink.type=jdbc
+debezium.sink.jdbc.connection.url=jdbc:postgresql://IP_DO_DESTINO:5432/DESTINO_DB
+debezium.sink.jdbc.connection.username=USUARIO_DESTINO
+debezium.sink.jdbc.connection.password=SENHA_DESTINO
+debezium.sink.jdbc.insert.mode=upsert
+debezium.sink.jdbc.primary.key.mode=record_key
+debezium.sink.jdbc.schema.evolution=none
+debezium.sink.jdbc.delete.enabled=true
+debezium.sink.jdbc.max.retries=5
+debezium.sink.jdbc.retry.interval.ms=5000
+
+# SOURCE (ORIGEM)
+debezium.source.connector.class=io.debezium.connector.postgresql.PostgresConnector
+debezium.source.offset.storage.file.filename=data/offsets.dat
+debezium.source.offset.flush.interval.ms=0
+debezium.source.database.hostname=backend_postgres
+debezium.source.database.port=5432
+debezium.source.database.user=replicator
+debezium.source.database.password=SENHA_ORIGEM
+debezium.source.database.dbname=nucleo001
+debezium.source.topic.prefix=migration
+debezium.source.plugin.name=pgoutput
+debezium.source.slot.name=debezium_slot
+debezium.source.snapshot.mode=initial
+debezium.source.schema.include.list=public
+debezium.source.schema.exclude.list=cron,information_schema,pg_catalog,pg_toast
+debezium.source.publication.name=dbz_publication
+debezium.source.heartbeat.interval.ms=60000
+debezium.source.heartbeat.topics.regex=.
+
+# TRANSFORMAÇÃO (Remover prefixo do nome da tabela)
+debezium.transforms=dropPrefix
+debezium.transforms.dropPrefix.type=org.apache.kafka.connect.transforms.RegexRouter
+debezium.transforms.dropPrefix.regex=migration.public.(.*)
+debezium.transforms.dropPrefix.replacement=$1
+
+# QUARKUS
+quarkus.log.console.format=%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c] (%t) %s%e%n
+quarkus.log.console.level=INFO
+```
